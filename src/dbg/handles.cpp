@@ -1,6 +1,7 @@
-#include <functional>
-#include "handles.h"
 #include "ntdll/ntdll.h"
+#include <functional>
+#include <algorithm>
+#include "handles.h"
 #include "exception.h"
 #include "debugger.h"
 #include "thread.h"
@@ -24,6 +25,7 @@ static void HandleTypesEnum()
         return;
 
     auto TypeInfo = TypesInformation()->TypeInformation;
+    HandleTypeNames.reserve(TypesInformation()->NumberOfTypes);
     for(ULONG i = 0; i < TypesInformation()->NumberOfTypes; i++)
     {
         auto wtypeName = WString(TypeInfo->TypeName.Buffer, TypeInfo->TypeName.Buffer + TypeInfo->TypeName.Length / 2);
@@ -177,8 +179,8 @@ bool HandlesGetName(HANDLE remoteHandle, String & name, String & typeName)
                     NTSTATUS isok = NtQueryInformationThread(hThread, ThreadBasicInformation, &threadInfo, sizeof(threadInfo), &threadInfoSize);
                     if(NT_SUCCESS(isok))
                     {
-                        TID = (DWORD)threadInfo.ClientId.UniqueThread;
-                        PID = (DWORD)threadInfo.ClientId.UniqueProcess;
+                        TID = (DWORD)(duint)threadInfo.ClientId.UniqueThread;
+                        PID = (DWORD)(duint)threadInfo.ClientId.UniqueProcess;
                     }
                 }
             };
@@ -297,7 +299,7 @@ static WINDOW_INFO getWindowInfo(HWND hWnd)
         limitedbuffer[255] = 0;
     }
     auto UTF8WindowTitle = StringUtils::Utf16ToUtf8(limitedbuffer);
-    memcpy(info.windowTitle, UTF8WindowTitle.c_str(), min(UTF8WindowTitle.size(), sizeof(info.windowTitle))); //Copy window title with repect to buffer size constraints
+    memcpy(info.windowTitle, UTF8WindowTitle.c_str(), std::min(UTF8WindowTitle.size(), sizeof(info.windowTitle))); //Copy window title with repect to buffer size constraints
     GetClassNameW(hWnd, limitedbuffer, 256);
     if(limitedbuffer[255] != 0) //Window class too long. Add "..." to the end of buffer.
     {
@@ -308,7 +310,7 @@ static WINDOW_INFO getWindowInfo(HWND hWnd)
         limitedbuffer[255] = 0;
     }
     UTF8WindowTitle = StringUtils::Utf16ToUtf8(limitedbuffer);
-    memcpy(info.windowClass, UTF8WindowTitle.c_str(), min(UTF8WindowTitle.size(), sizeof(info.windowClass))); //Copy window class with repect to buffer size constraints
+    memcpy(info.windowClass, UTF8WindowTitle.c_str(), std::min(UTF8WindowTitle.size(), sizeof(info.windowClass))); //Copy window class with repect to buffer size constraints
     return info;
 }
 

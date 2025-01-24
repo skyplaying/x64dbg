@@ -16,11 +16,12 @@ SimpleTraceDialog::SimpleTraceDialog(QWidget* parent) :
     if(!BridgeSettingGetUint("Engine", "MaxTraceCount", &setting))
         setting = 50000;
     ui->spinMaxTraceCount->setValue(int(setting));
-    ui->editBreakCondition->setPlaceholderText(tr("Example: %1").arg("eax == 0 && ebx == 0"));
+    ui->editBreakCondition->setPlaceholderText(tr("Example: %1 (numbers are hex by default)").arg("eax == 0 && ebx == 0"));
     ui->editLogText->setPlaceholderText(tr("Example: %1").arg("0x{p:cip} {i:cip}"));
     ui->editLogCondition->setPlaceholderText(tr("Example: %1").arg("eax == 0 && ebx == 0"));
     ui->editCommandText->setPlaceholderText(tr("Example: %1").arg("eax=4;StepOut"));
     ui->editCommandCondition->setPlaceholderText(tr("Example: %1").arg("eax == 0 && ebx == 0"));
+    ui->lblBreakCondition->setText(QString("<a href=\"https://help.x64dbg.com/en/latest/introduction/ConditionalTracing.html\">%1</a>:").arg(ui->lblBreakCondition->text().replace(":", "")));
 }
 
 SimpleTraceDialog::~SimpleTraceDialog()
@@ -35,9 +36,7 @@ void SimpleTraceDialog::setTraceCommand(const QString & command)
 
 static QString escapeText(QString str)
 {
-    str.replace(QChar('\\'), QString("\\\\"));
-    str.replace(QChar('"'), QString("\\\""));
-    return str;
+    return DbgCmdEscape(std::move(str));
 }
 
 void SimpleTraceDialog::on_btnOk_clicked()

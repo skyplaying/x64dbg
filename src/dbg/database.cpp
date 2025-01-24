@@ -71,6 +71,7 @@ void DbSave(DbLoadSaveType saveType, const char* dbfile, bool disablecompression
         EncodeMapCacheSave(root);
         TraceRecord.saveToDb(root);
         BpCacheSave(root);
+        ModCacheSave(root);
         WatchCacheSave(root);
 
         //save notes
@@ -91,7 +92,7 @@ void DbSave(DbLoadSaveType saveType, const char* dbfile, bool disablecompression
 
         //plugin data
         PLUG_CB_LOADSAVEDB pluginSaveDb;
-        // Some plugins may wish to change this value so that all plugins after his or her plugin will save data into plugin-supplied storage instead of the system's.
+        // Some plugins may wish to change this value so that all plugins after their plugin will save data into plugin-supplied storage instead of the system's.
         // We back up this value so that the debugger is not fooled by such plugins.
         JSON pluginRoot = json_object();
         pluginSaveDb.root = pluginRoot;
@@ -191,6 +192,34 @@ void DbLoad(DbLoadSaveType loadType, const char* dbfile)
     // Multi-byte (UTF8) file path converted to UTF16
     WString databasePathW = StringUtils::Utf8ToUtf16(file);
 
+    // Check if we should migrate the breakpoints
+    bool migrateBreakpoints = false;
+    {
+        HANDLE hFile = CreateFileW(databasePathW.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, 0);
+        if(hFile != INVALID_HANDLE_VALUE)
+        {
+            FILETIME written;
+            if(GetFileTime(hFile, nullptr, nullptr, &written))
+            {
+                // On 2023-06-10 the default of the command condition was changed
+                SYSTEMTIME smigration = {};
+                smigration.wYear = 2023;
+                smigration.wMonth = 6;
+                smigration.wDay = 10;
+                FILETIME migration = {};
+                if(SystemTimeToFileTime(&smigration, &migration))
+                {
+                    if(CompareFileTime(&written, &migration) < 0)
+                    {
+                        dprintf(QT_TRANSLATE_NOOP("DBG", "(migrating breakpoints) "));
+                        migrateBreakpoints = true;
+                    }
+                }
+            }
+            CloseHandle(hFile);
+        }
+    }
+
     // Decompress the file if compression was enabled
     bool useCompression = !settingboolget("Engine", "DisableDatabaseCompression");
     LZ4_STATUS lzmaStatus = LZ4_INVALID_ARCHIVE;
@@ -254,7 +283,8 @@ void DbLoad(DbLoadSaveType loadType, const char* dbfile)
         XrefCacheLoad(root);
         EncodeMapCacheLoad(root);
         TraceRecord.loadFromDb(root);
-        BpCacheLoad(root);
+        BpCacheLoad(root, migrateBreakpoints);
+        ModCacheLoad(root);
         WatchCacheLoad(root);
 
         // Load notes
@@ -312,6 +342,7 @@ void DbClear(bool terminating)
     EncodeMapClear();
     TraceRecord.clear();
     BpClear();
+    ModCacheClear();
     WatchClear();
     GuiSetDebuggeeNotes("");
 

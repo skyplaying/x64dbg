@@ -16,8 +16,6 @@
 #include "../exe/icon.h"
 #include "../dbg/GetPeArch.h"
 
-#pragma comment(lib, "comctl32.lib")
-
 static bool FileExists(const TCHAR* file)
 {
     auto attrib = GetFileAttributes(file);
@@ -309,7 +307,7 @@ static void restartInstall()
     ShellExecute(nullptr, operation, szApplicationDir, TEXT("::install"), szCurrentDir, SW_SHOWNORMAL);
 }
 
-static BOOL CALLBACK DlgLauncher(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
+static INT_PTR CALLBACK DlgLauncher(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch(uMsg)
     {
@@ -421,8 +419,22 @@ static void deleteZoneData(const std::wstring & rootDir)
     }
 }
 
+typedef BOOL(WINAPI* LPFN_SetProcessDpiAwarenessContext)(int);
+
+static void EnableHiDPI()
+{
+    // Windows 10 Build 1607
+    LPFN_SetProcessDpiAwarenessContext SetProcessDpiAwarenessContext = (LPFN_SetProcessDpiAwarenessContext)GetProcAddress(GetModuleHandle(TEXT("user32.dll")), "SetProcessDpiAwarenessContext");
+    if(SetProcessDpiAwarenessContext != nullptr)
+    {
+        // Windows 10 Build 1703
+        SetProcessDpiAwarenessContext(-4);  //DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    }
+}
+
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
+    EnableHiDPI();
     InitCommonControls();
 
     //Initialize COM
@@ -714,9 +726,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             break;
         case PeArch::Invalid:
             if(FileExists(szPath))
-                MessageBox(nullptr, argv[1], LoadResString(IDS_INVDPE), MB_ICONERROR);
+                MessageBox(nullptr, LoadResString(IDS_INVDPE), argv[1], MB_ICONERROR);
             else
-                MessageBox(nullptr, argv[1], LoadResString(IDS_FILEERR), MB_ICONERROR);
+                MessageBox(nullptr, LoadResString(IDS_FILEERR), argv[1], MB_ICONERROR);
             break;
         default:
             __debugbreak();

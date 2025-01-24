@@ -7,11 +7,12 @@
 #include "variable.h"
 #include "threading.h"
 #include <map>
+#include <algorithm>
 
 /**
 \brief The container that stores all variables.
 */
-std::map<String, VAR, CaseInsensitiveCompare> variables;
+std::map<String, VAR, StringUtils::CaseInsensitiveLess> variables;
 
 /**
 \brief Sets a variable with a value.
@@ -155,7 +156,7 @@ bool varnew(const char* Name, duint Value, VAR_TYPE Type)
         var.value.size = sizeof(duint);
         var.value.type = VAR_UINT;
         var.value.u.value = Value;
-        variables.insert(std::make_pair(name_, var));
+        variables.emplace(name_, var);
     }
     return true;
 }
@@ -240,7 +241,7 @@ bool varget(const char* Name, char* String, int* Size, VAR_TYPE* Type)
     if(Type)
         *Type = vartype;
     if(String)
-        memcpy(String, varvalue.u.data->data(), Size ? min(*Size, varsize) : varsize);
+        memcpy(String, varvalue.u.data->data(), Size ? std::min(*Size, varsize) : varsize);
     return true;
 }
 

@@ -1,5 +1,5 @@
-#include "cmd-debug-control.h"
 #include "ntdll/ntdll.h"
+#include "cmd-debug-control.h"
 #include "console.h"
 #include "debugger.h"
 #include "animate.h"
@@ -17,20 +17,26 @@
 #include "exception.h"
 #include "stringformat.h"
 
-static bool skipInt3Stepping(int argc, char* argv[])
+static bool isInt3Exception()
 {
-    if(!bSkipInt3Stepping || dbgisrunning() || getLastExceptionInfo().ExceptionRecord.ExceptionCode != EXCEPTION_BREAKPOINT)
+    if(getLastExceptionInfo().ExceptionRecord.ExceptionCode != EXCEPTION_BREAKPOINT)
         return false;
+
     auto exceptionAddress = (duint)getLastExceptionInfo().ExceptionRecord.ExceptionAddress;
     unsigned char data[MAX_DISASM_BUFFER];
     MemRead(exceptionAddress, data, sizeof(data));
     Zydis zydis;
-    if(zydis.Disassemble(exceptionAddress, data) && zydis.IsInt3())
+    return zydis.Disassemble(exceptionAddress, data) && zydis.IsInt3();
+}
+
+static bool skipInt3Stepping(int argc, char* argv[])
+{
+    if(bSkipInt3Stepping && !dbgisrunning() && isInt3Exception())
     {
         //Don't allow skipping of multiple consecutive INT3 instructions
         getLastExceptionInfo().ExceptionRecord.ExceptionCode = 0;
+        dbgsetcontinuestatus(DBG_CONTINUE); // swallow the exception
         dputs(QT_TRANSLATE_NOOP("DBG", "Skipped INT3!"));
-        cbDebugContinue(1, argv);
         return true;
     }
     return false;
@@ -66,20 +72,48 @@ bool cbDebugInit(int argc, char* argv[])
     cbDebugStop(argc, argv);
     ASSERT_TRUE(hDebugLoopThread == nullptr);
 
-    static char arg1[deflen] = "";
+    char arg1[deflen] = "";
     strcpy_s(arg1, argv[1]);
-    wchar_t szResolvedPath[MAX_PATH] = L"";
-    if(ResolveShortcut(GuiGetWindowHandle(), StringUtils::Utf8ToUtf16(arg1).c_str(), szResolvedPath, _countof(szResolvedPath)))
+
+    char arg2[deflen] = "";
+    if(argc > 2)
+        strcpy_s(arg2, argv[2]);
+
+    char arg3[deflen] = "";
+    if(argc > 3)
+        strcpy_s(arg3, argv[3]);
+
+    // Process .lnk files
+    std::wstring executable, arguments, workingDir;
+    if(ResolveShortcut(GuiGetWindowHandle(), StringUtils::Utf8ToUtf16(arg1).c_str(), executable, arguments, workingDir))
     {
-        auto resolvedPathUtf8 = StringUtils::Utf16ToUtf8(szResolvedPath);
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Resolved shortcut \"%s\"->\"%s\"\n"), arg1, resolvedPathUtf8.c_str());
+        auto resolvedPathUtf8 = StringUtils::Utf16ToUtf8(executable);
+        dprintf(QT_TRANSLATE_NOOP("DBG", "Resolved shortcut \"%s\" -> \"%s\"\n"), arg1, resolvedPathUtf8.c_str());
         strcpy_s(arg1, resolvedPathUtf8.c_str());
+
+        // Assign a command line from the shortcut if it wasn't overwritten
+        if(argc <= 2)
+        {
+            auto resolvedArgsUtf8 = StringUtils::Utf16ToUtf8(arguments);
+            dprintf(QT_TRANSLATE_NOOP("DBG", "Resolved arguments from shortcut \"%s\"\n"), resolvedArgsUtf8.c_str());
+            strcpy_s(arg2, resolvedArgsUtf8.c_str());
+        }
+
+        // Assign a working directory from the shortcut if it wasn't overwritten
+        if(argc <= 3)
+        {
+            auto resolvedWorkingDirUtf8 = StringUtils::Utf16ToUtf8(workingDir);
+            dprintf(QT_TRANSLATE_NOOP("DBG", "Resolved working directory from shortcut \"%s\"\n"), resolvedWorkingDirUtf8.c_str());
+            strcpy_s(arg3, resolvedWorkingDirUtf8.c_str());
+        }
     }
+
     if(!FileExists(arg1))
     {
         dputs(QT_TRANSLATE_NOOP("DBG", "File does not exist!"));
         return false;
     }
+
     auto arg1w = StringUtils::Utf8ToUtf16(arg1);
     Handle hFile = CreateFileW(arg1w.c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
     if(hFile == INVALID_HANDLE_VALUE)
@@ -118,32 +152,23 @@ bool cbDebugInit(int argc, char* argv[])
         break;
     }
 
-    static char arg2[deflen] = "";
-    if(argc > 2)
-        strcpy_s(arg2, argv[2]);
-    char* commandline = 0;
-    if(strlen(arg2))
-        commandline = arg2;
-
-    char arg3[deflen] = "";
-    if(argc > 3)
-        strcpy_s(arg3, argv[3]);
-
-    static char currentfolder[deflen] = "";
+    // Default to the application folder
+    char currentfolder[deflen] = "";
     strcpy_s(currentfolder, arg1);
     int len = (int)strlen(currentfolder);
     while(currentfolder[len] != '\\' && len != 0)
         len--;
     currentfolder[len] = 0;
 
+    // Allow the user to overwrite the working directory
     if(DirExists(arg3))
         strcpy_s(currentfolder, arg3);
 
     static INIT_STRUCT init;
     init.exe = arg1;
-    init.commandline = commandline;
-    if(*currentfolder)
-        init.currentfolder = currentfolder;
+    init.commandline = arg2;
+    init.currentfolder = currentfolder;
+
     dbgcreatedebugthread(&init);
     return true;
 }
@@ -403,12 +428,12 @@ bool cbDebugContinue(int argc, char* argv[])
 {
     if(argc < 2)
     {
-        SetNextDbgContinueStatus(DBG_CONTINUE);
+        dbgsetcontinuestatus(DBG_CONTINUE);
         dputs(QT_TRANSLATE_NOOP("DBG", "Exception will be swallowed"));
     }
     else
     {
-        SetNextDbgContinueStatus(DBG_EXCEPTION_NOT_HANDLED);
+        dbgsetcontinuestatus(DBG_EXCEPTION_NOT_HANDLED);
         dputs(QT_TRANSLATE_NOOP("DBG", "Exception will be thrown in the program"));
     }
     return true;
@@ -479,7 +504,7 @@ static bool IsRepeated(const Zydis & zydis)
     case ZYDIS_MNEMONIC_SCASW:
     case ZYDIS_MNEMONIC_SCASD:
     case ZYDIS_MNEMONIC_SCASQ:
-        return (zydis.GetInstr()->attributes & (ZYDIS_ATTRIB_HAS_REP | ZYDIS_ATTRIB_HAS_REPZ | ZYDIS_ATTRIB_HAS_REPNZ)) != 0;
+        return (zydis.GetInstr()->info.attributes & (ZYDIS_ATTRIB_HAS_REP | ZYDIS_ATTRIB_HAS_REPZ | ZYDIS_ATTRIB_HAS_REPNZ)) != 0;
     }
     return false;
 }
@@ -542,8 +567,15 @@ bool cbDebugSkip(int argc, char* argv[])
     duint skiprepeat = 1;
     if(argc > 1 && !valfromstring(argv[1], &skiprepeat, false))
         return false;
-    SetNextDbgContinueStatus(DBG_CONTINUE); //swallow the exception
-    duint cip = GetContextDataEx(hActiveThread, UE_CIP);
+
+    // Because an int3 causes CIP to be advanced we start disassembling from there
+    duint cip;
+    if(isInt3Exception())
+        cip = (duint)getLastExceptionInfo().ExceptionRecord.ExceptionAddress;
+    else
+        cip = GetContextDataEx(hActiveThread, UE_CIP);
+
+    dbgsetcontinuestatus(DBG_CONTINUE); //swallow the exception
     BASIC_INSTRUCTION_INFO basicinfo;
     while(skiprepeat--)
     {

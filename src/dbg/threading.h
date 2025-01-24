@@ -1,5 +1,4 @@
-#ifndef _THREADING_H
-#define _THREADING_H
+#pragma once
 
 #include "_global.h"
 
@@ -81,6 +80,14 @@ enum SectionLock
     LockLast
 };
 
+template<typename T>
+struct __declspec(align(64)) CacheAligned
+{
+    T value;
+
+    T* operator&() { return &value; }
+};
+
 class SectionLockerGlobal
 {
     template<SectionLock LockIndex, bool Shared, bool ProcessGuiEvents>
@@ -101,7 +108,7 @@ private:
 
             if(Shared)
             {
-                if(m_owner[LockIndex].thread == threadId)
+                if(m_exclusiveOwner[LockIndex].threadId == threadId)
                     return;
 
                 if(ProcessGuiEvents && threadId == m_guiMainThreadId)
@@ -116,10 +123,10 @@ private:
                 return;
             }
 
-            if(m_owner[LockIndex].thread == threadId)
+            if(m_exclusiveOwner[LockIndex].threadId == threadId)
             {
-                assert(m_owner[LockIndex].count > 0);
-                m_owner[LockIndex].count++;
+                assert(m_exclusiveOwner[LockIndex].count > 0);
+                m_exclusiveOwner[LockIndex].count++;
                 return;
             }
 
@@ -133,10 +140,10 @@ private:
                 m_AcquireSRWLockExclusive(srwLock);
             }
 
-            assert(m_owner[LockIndex].thread == 0);
-            assert(m_owner[LockIndex].count == 0);
-            m_owner[LockIndex].thread = threadId;
-            m_owner[LockIndex].count = 1;
+            assert(m_exclusiveOwner[LockIndex].threadId == 0);
+            assert(m_exclusiveOwner[LockIndex].count == 0);
+            m_exclusiveOwner[LockIndex].threadId = threadId;
+            m_exclusiveOwner[LockIndex].count = 1;
         }
         else
         {
@@ -160,19 +167,19 @@ private:
         {
             if(Shared)
             {
-                if(m_owner[LockIndex].thread == GetCurrentThreadId())
+                if(m_exclusiveOwner[LockIndex].threadId == GetCurrentThreadId())
                     return;
 
                 m_ReleaseSRWLockShared(&m_srwLocks[LockIndex]);
                 return;
             }
 
-            assert(m_owner[LockIndex].count && m_owner[LockIndex].thread);
-            m_owner[LockIndex].count--;
+            assert(m_exclusiveOwner[LockIndex].count && m_exclusiveOwner[LockIndex].threadId);
+            m_exclusiveOwner[LockIndex].count--;
 
-            if(m_owner[LockIndex].count == 0)
+            if(m_exclusiveOwner[LockIndex].count == 0)
             {
-                m_owner[LockIndex].thread = 0;
+                m_exclusiveOwner[LockIndex].threadId = 0;
                 m_ReleaseSRWLockExclusive(&m_srwLocks[LockIndex]);
             }
         }
@@ -187,10 +194,11 @@ private:
 
     static bool m_Initialized;
     static bool m_SRWLocks;
-    struct owner_info { DWORD thread; size_t count; };
-    static owner_info m_owner[SectionLock::LockLast];
-    static SRWLOCK m_srwLocks[SectionLock::LockLast];
-    static CRITICAL_SECTION m_crLocks[SectionLock::LockLast];
+
+    struct __declspec(align(64)) owner_info { DWORD threadId; size_t count; };
+    static owner_info m_exclusiveOwner[SectionLock::LockLast];
+    static CacheAligned<SRWLOCK> m_srwLocks[SectionLock::LockLast];
+    static CacheAligned<CRITICAL_SECTION> m_crLocks[SectionLock::LockLast];
     static SRWLOCKFUNCTION m_InitializeSRWLock;
     static SRWLOCKFUNCTION m_AcquireSRWLockShared;
     static TRYSRWLOCKFUNCTION m_TryAcquireSRWLockShared;
@@ -247,4 +255,14 @@ private:
     using Internal = SectionLockerGlobal;
 };
 
-#endif // _THREADING_H
+struct TLSData
+{
+    String moduleHashLower;
+
+    TLSData();
+    TLSData(const TLSData &) = delete;
+    TLSData & operator=(const TLSData &) = delete;
+
+    static bool notify(DWORD fdwReason);
+    static TLSData* get();
+};
